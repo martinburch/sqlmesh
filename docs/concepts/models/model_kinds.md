@@ -1,8 +1,82 @@
 # Model kinds
 
-This page describes the kinds of [models](./overview.md) SQLMesh supports, which determine how the data for a model is loaded.
+A model's `kind` determines how it loads data, and your project's choice of model `kind`s determines how your data pipelines behave.
+
+This page describes the kinds of [models](./overview.md) SQLMesh supports.
+
+The `kind`s are roughly ordered by how frequently they are used in real-world SQLMesh projects, with the most common `kind` first:
+
+- By default, use `VIEW`s to avoid unnecessarily processing data. They're great for look up tables, small amounts of data, or data that is infrequently queried.
+- Reach for `INCREMENTAL_BY_TIME_RANGE` when you need to persist large amounts of historical data. They let you avoid reprocessing all of history when you make changes.
+- The `FULL` model kind is suitable when your dataset is small enough to recompute cheaply. They're easy to work with because they just recompute everything from scratch each time.
+- `EXTERNAL` models are special because they don't run. Instead, they tell SQLMesh about what's in external tables SQLMesh doesn't control. SQLMesh uses that information to generate column level lineage and optimize queries.
+- `SEED` models consist of CSV format data that SQLMesh loads into a database table. They're best for small datasets that are infrequently updated.
+- `MANAGED` models allow you to use the automatically managed/refreshed tables offered by some SQL engines. SQLMesh hands the refreshing process off to the SQL engine.
+- `EMBEDDED` models are a handy way to share query code between models. When a model refers to an `EMBEDDED` model, SQLMesh injects the `EMBEDDED` query directly into the model's.
+
+The last three model kinds are powerful but significantly more complex to manage than the previous model kinds.
+
+They are all inherently [non-idempotent](../glossary.md#idempotency), which increases the likelihood of accidental data loss.
+
+We recommend considering carefully whether another model `kind` can meet your needs: simpler is almost always better.
+
+- `SCD_TYPE_2` models implement the [slowly changing dimensions](https://en.wikipedia.org/wiki/Slowly_changing_dimension#Type_2:_add_new_row) approach to data loading. They retain a comprehensive history of how records change over time.
+- An `INCREMENTAL_BY_UNIQUE_KEY` model loads records by a unique key. They retain the most recent version of every unique key's record.
+- The `INCREMENTAL_BY_PARTITION` model kind loads records by partition key. In almost all cases another model `kind` will better meet your needs, but this kind is appropriate when your data is already stored in partitions or when you must optimize for performance.
 
 Find information about all model kind configuration parameters in the [model configuration reference page](../../reference/model_configuration.md).
+
+## VIEW
+Most model kinds materialize the output of a model query and store it in a physical table.
+
+The `VIEW` kind is different, because no data is actually written during model execution. Instead, a non-materialized view (or "virtual table") is created or replaced based on the model's query.
+
+!!! tip "Default model kind"
+
+    `VIEW` is the default model kind if kind is not specified in the `MODEL` DDL.
+
+This example specifies a `VIEW` model kind:
+```sql linenums="1" hl_lines="3"
+MODEL (
+  name db.highest_salary,
+  kind VIEW
+);
+
+SELECT
+  MAX(salary)
+FROM db.employees;
+```
+
+!!! info "Query executed every time"
+
+    A `VIEW` kind's model query is evaluated every time the model is referenced in a downstream query.
+
+    This could incur undesirable compute cost and time if the model's query is compute-intensive, or when the model is referenced in many downstream models.
+
+### Materialized Views
+
+Configure the `VIEW` model kind to create a [materialized view](https://en.wikipedia.org/wiki/Materialized_view) by setting the `materialized` flag to `true`:
+
+```sql linenums="1" hl_lines="4"
+MODEL (
+  name db.highest_salary,
+  kind VIEW (
+    materialized true
+  )
+);
+```
+
+SQLMesh will only replace/recreate the materialized view if the model query has changed since the view was last created.
+
+That way materialized views are recreated only when necessary, maximizing the benefits they provide.
+
+**Note:** The `materialized` flag is only used by engines that support materialized views (other engines ignore it). Supported engines include:
+
+* BigQuery
+* Databricks
+* Snowflake
+
+
 
 ## INCREMENTAL_BY_TIME_RANGE
 
@@ -138,281 +212,7 @@ Depending on the target engine, models of the `INCREMENTAL_BY_TIME_RANGE` kind a
 | Postgres   | DELETE by time range, then INSERT         |
 | DuckDB     | DELETE by time range, then INSERT         |
 
-## INCREMENTAL_BY_PARTITION
 
-Models of the `INCREMENTAL_BY_PARTITION` kind are computed incrementally based on partition. A set of columns defines the model's partitioning key, and a partition is the group of rows with the same partitioning key value.
-
-!!! info "Should you use this model kind?"
-
-    Any model kind can use a partitioned table by specifying the [`partitioned_by` key](../models/overview.md#partitioned_by) in the `MODEL` DDL. The "partition" in `INCREMENTAL_BY_PARTITION` is about how the data is **loaded** when the model runs.
-
-    `INCREMENTAL_BY_PARTITION` models are inherently [non-idempotent](../glossary.md#idempotency), so restatements and other actions can cause data loss. This makes them more complex to manage than other model kinds.
-
-    In most scenarios, an `INCREMENTAL_BY_TIME_RANGE` model can meet your needs and will be easier to manage. The `INCREMENTAL_BY_PARTITION` model kind should only be used when the data must be loaded by partition (usually for performance reasons).
-
-This model kind is designed for the scenario where data rows should be loaded and updated as a group based on their shared value for the partitioning key.
-
-It may be used with any SQL engine. SQLMesh will automatically create partitioned tables on engines that support explicit table partitioning (e.g., [BigQuery](https://cloud.google.com/bigquery/docs/creating-partitioned-tables), [Databricks](https://docs.databricks.com/en/sql/language-manual/sql-ref-partition.html)).
-
-New rows are loaded based on their partitioning key value:
-
-- If a partitioning key in newly loaded data is not present in the model table, the new partitioning key and its data rows are inserted.
-- If a partitioning key in newly loaded data is already present in the model table, **all the partitioning key's existing data rows in the model table are replaced** with the partitioning key's data rows in the newly loaded data.
-- If a partitioning key is present in the model table but not present in the newly loaded data, the partitioning key's existing data rows are not modified and remain in the model table.
-
-This kind should only be used for datasets that have the following traits:
-
-* The dataset's records can be grouped by a partitioning key.
-* Each record has a partitioning key associated with it.
-* It is appropriate to upsert records, so existing records can be overwritten by new arrivals when their partitioning keys match.
-* All existing records associated with a given partitioning key can be removed or overwritten when any new record has the partitioning key value.
-
-The column defining the partitioning key is specified in the model's `MODEL` DDL `partitioned_by` key. This example shows the `MODEL` DDL for an `INCREMENTAL_BY_PARTITION` model whose partition key is the row's value for the `region` column:
-
-```sql linenums="1" hl_lines="4"
-MODEL (
-  name db.events,
-  kind INCREMENTAL_BY_PARTITION,
-  partitioned_by region,
-);
-```
-
-Compound partition keys are also supported, such as `region` and `department`:
-
-```sql linenums="1" hl_lines="4"
-MODEL (
-  name db.events,
-  kind INCREMENTAL_BY_PARTITION,
-  partitioned_by (region, department),
-);
-```
-
-Date and/or timestamp column expressions are also supported (varies by SQL engine). This BigQuery example's partition key is based on the month each row's `event_date` occurred:
-
-```sql linenums="1" hl_lines="4"
-MODEL (
-  name db.events,
-  kind INCREMENTAL_BY_PARTITION,
-  partitioned_by DATETIME_TRUNC(event_date, MONTH)
-);
-```
-
-!!! warning "Only full restatements supported"
-
-    Partial data [restatements](../plans.md#restatement-plans) are used to reprocess part of a table's data (usually a limited time range).
-
-    Partial data restatement is not supported for `INCREMENTAL_BY_PARTITION` models. If you restate an `INCREMENTAL_BY_PARTITION` model, its entire table will be recreated from scratch.
-
-    Restating `INCREMENTAL_BY_PARTITION` models may lead to data loss and should be performed with care.
-
-### Example
-
-This is a fuller example of how you would use this model kind in practice. It limits the number of partitions to backfill based on time range in the `partitions_to_update` CTE.
-
-```sql linenums="1"
-MODEL (
-  name demo.incremental_by_partition_demo,
-  kind INCREMENTAL_BY_PARTITION,
-  partitioned_by user_segment,
-);
-
--- This is the source of truth for what partitions need to be updated and will join to the product usage data
--- This could be an INCREMENTAL_BY_TIME_RANGE model that reads in the user_segment values last updated in the past 30 days to reduce scope
--- Use this strategy to reduce full restatements
-WITH partitions_to_update AS (
-  SELECT DISTINCT
-    user_segment
-  FROM demo.incremental_by_time_range_demo  -- upstream table tracking which user segments to update
-  WHERE last_updated_at BETWEEN DATE_SUB(@start_dt, INTERVAL 30 DAY) AND @end_dt
-),
-
-product_usage AS (
-  SELECT
-    product_id,
-    customer_id,
-    last_usage_date,
-    usage_count,
-    feature_utilization_score,
-    user_segment
-  FROM sqlmesh-public-demo.tcloud_raw_data.product_usage
-  WHERE user_segment IN (SELECT user_segment FROM partitions_to_update) -- partition filter applied here
-)
-
-SELECT
-  product_id,
-  customer_id,
-  last_usage_date,
-  usage_count,
-  feature_utilization_score,
-  user_segment,
-  CASE
-    WHEN usage_count > 100 AND feature_utilization_score > 0.7 THEN 'Power User'
-    WHEN usage_count > 50 THEN 'Regular User'
-    WHEN usage_count IS NULL THEN 'New User'
-    ELSE 'Light User'
-  END as user_type
-FROM product_usage
-```
-
-**Note**: Partial data [restatement](../plans.md#restatement-plans) is not supported for this model kind, which means that the entire table will be recreated from scratch if restated. This may lead to data loss.
-
-### Materialization strategy
-Depending on the target engine, models of the `INCREMENTAL_BY_PARTITION` kind are materialized using the following strategies:
-
-| Engine     | Strategy                                |
-|------------|-----------------------------------------|
-| Databricks | REPLACE WHERE by partitioning key       |
-| Spark      | INSERT OVERWRITE by partitioning key    |
-| Snowflake  | DELETE by partitioning key, then INSERT |
-| BigQuery   | DELETE by partitioning key, then INSERT |
-| Redshift   | DELETE by partitioning key, then INSERT |
-| Postgres   | DELETE by partitioning key, then INSERT |
-| DuckDB     | DELETE by partitioning key, then INSERT |
-
-## INCREMENTAL_BY_UNIQUE_KEY
-
-Models of the `INCREMENTAL_BY_UNIQUE_KEY` kind are computed incrementally based on a key that is unique for each data row.
-
-If a key in newly loaded data is not present in the model table, the new data row is inserted. If a key in newly loaded data is already present in the model table, the existing row is updated with the new data. If a key is present in the model table but not present in the newly loaded data, its row is not modified and remains in the model table.
-
-This kind is a good fit for datasets that have the following traits:
-
-* Each record has a unique key associated with it.
-* There is at most one record associated with each unique key.
-* It is appropriate to upsert records, so existing records can be overwritten by new arrivals when their keys match.
-
-A [Slowly Changing Dimension](../glossary.md#slowly-changing-dimension-scd) (SCD) is one approach that fits this description well. See the [SCD Type 2](#scd-type-2) model kind for a specific model kind for SCD Type 2 models.
-
-The name of the unique key column must be provided as part of the `MODEL` DDL, as in this example:
-```sql linenums="1" hl_lines="3-5"
-MODEL (
-  name db.employees,
-  kind INCREMENTAL_BY_UNIQUE_KEY (
-    unique_key name
-  )
-);
-
-SELECT
-  name::TEXT as name,
-  title::TEXT as title,
-  salary::INT as salary
-FROM raw_employees;
-```
-
-Composite keys are also supported:
-```sql linenums="1" hl_lines="4"
-MODEL (
-  name db.employees,
-  kind INCREMENTAL_BY_UNIQUE_KEY (
-    unique_key (first_name, last_name)
-  )
-);
-```
-
-`INCREMENTAL_BY_UNIQUE_KEY` model kinds can also filter upstream records by time range using a SQL `WHERE` clause and the `@start_date`, `@end_date` or other macro variables (similar to the [INCREMENTAL_BY_TIME_RANGE](#incremental_by_time_range) kind). Note that SQLMesh macro time variables are in the UTC time zone.
-```sql linenums="1" hl_lines="6-7"
-SELECT
-  name::TEXT as name,
-  title::TEXT as title,
-  salary::INT as salary
-FROM raw_employee_events
-WHERE
-  event_date BETWEEN @start_date AND @end_date;
-```
-
-**Note:** Models of the `INCREMENTAL_BY_UNIQUE_KEY` kind are inherently [non-idempotent](../glossary.md#idempotency), which should be taken into consideration during data [restatement](../plans.md#restatement-plans). As a result, partial data restatement is not supported for this model kind, which means that the entire table will be recreated from scratch if restated.
-
-### Unique Key Expressions
-
-The `unique_key` values can either be column names or SQL expressions. For example, if you wanted to create a key that is based on the coalesce of a value then you could do the following:
-
-```sql linenums="1" hl_lines="4"
-MODEL (
-  name db.employees,
-  kind INCREMENTAL_BY_UNIQUE_KEY (
-    unique_key COALESCE("name", '')
-  )
-);
-```
-
-### When Matched Expression
-
-The logic to use when updating columns when a match occurs (the source and target match on the given keys) by default updates all the columns. This can be overriden with custom logic like below:
-
-```sql linenums="1" hl_lines="5"
-MODEL (
-  name db.employees,
-  kind INCREMENTAL_BY_UNIQUE_KEY (
-    unique_key name,
-    when_matched (
-      WHEN MATCHED THEN UPDATE SET target.salary = COALESCE(source.salary, target.salary)
-    )
-  )
-);
-```
-
-The `source` and `target` aliases are required when using the `when_matched` expression in order to distinguish between the source and target columns.
-
-Multiple `WHEN MATCHED` expressions can also be provided. Ex:
-
-```sql linenums="1" hl_lines="5-6"
-MODEL (
-  name db.employees,
-  kind INCREMENTAL_BY_UNIQUE_KEY (
-    unique_key name,
-    when_matched (
-      WHEN MATCHED AND source.value IS NULL THEN UPDATE SET target.salary = COALESCE(source.salary, target.salary)
-      WHEN MATCHED THEN UPDATE SET target.title = COALESCE(source.title, target.title)
-    )
-  )
-);
-```
-
-**Note**: `when_matched` is only available on engines that support the `MERGE` statement. Currently supported engines include:
-
-* BigQuery
-* Databricks
-* Postgres
-* Redshift
-* Snowflake
-* Spark
-
-Redshift supports only the `UPDATE` or `DELETE` actions for the `WHEN MATCHED` clause and does not allow multiple `WHEN MATCHED` expressions. For further information, refer to the [Redshift documentation](https://docs.aws.amazon.com/redshift/latest/dg/r_MERGE.html#r_MERGE-parameters).
-
-### Merge Filter Expression
-
-The `MERGE` statement typically induces a full table scan of the existing table, which can be problematic with large data volumes.
-
-Prevent a full table scan by passing filtering conditions to the `merge_filter` parameter.
-
-The `merge_filter` accepts a single or a conjunction of predicates to be used in the `ON` clause of the `MERGE` operation:
-
-```sql linenums="1" hl_lines="5"
-MODEL (
-  name db.employee_contracts,
-  kind INCREMENTAL_BY_UNIQUE_KEY (
-    unique_key id,
-    merge_filter source._operation IS NULL AND target.contract_date > dateadd(day, -7, current_date)
-  )
-);
-```
-
-Similar to `when_matched`, the `source` and `target` aliases are used to distinguish between the source and target tables.
-
-If an existing dbt project uses the [incremental_predicates](https://docs.getdbt.com/docs/build/incremental-strategy#about-incremental_predicates) functionality, SQLMesh will automatically convert them into the equivalent `merge_filter` specification.
-
-### Materialization strategy
-Depending on the target engine, models of the `INCREMENTAL_BY_UNIQUE_KEY` kind are materialized using the following strategies:
-
-| Engine     | Strategy                            |
-|------------|-------------------------------------|
-| Spark      | not supported                       |
-| Databricks | MERGE ON unique key                 |
-| Snowflake  | MERGE ON unique key                 |
-| BigQuery   | MERGE ON unique key                 |
-| Redshift   | MERGE ON unique key                 |
-| Postgres   | MERGE ON unique key                 |
-| DuckDB     | DELETE ON matched + INSERT new rows |
 
 ## FULL
 Models of the `FULL` kind cause the dataset associated with a model to be fully refreshed (rewritten) upon each model evaluation.
@@ -448,65 +248,35 @@ Depending on the target engine, models of the `FULL` kind are materialized using
 | Postgres   | DROP TABLE, CREATE TABLE, INSERT |
 | DuckDB     | CREATE OR REPLACE TABLE          |
 
-## VIEW
-The model kinds described so far cause the output of a model query to be materialized and stored in a physical table.
 
-The `VIEW` kind is different, because no data is actually written during model execution. Instead, a non-materialized view (or "virtual table") is created or replaced based on the model's query.
+## EXTERNAL
 
-**Note:** `VIEW` is the default model kind if kind is not specified.
+The EXTERNAL model kind is used to specify [external models](./external_models.md) that store metadata about external tables.
 
-**Note:** With this kind, the model's query is evaluated every time the model is referenced in a downstream query. This may incur undesirable compute cost and time in cases where the model's query is compute-intensive, or when the model is referenced in many downstream queries.
+External models are special; they are not specified in .sql files like the other model kinds.
 
-This example specifies a `VIEW` model kind:
-```sql linenums="1" hl_lines="3"
-MODEL (
-  name db.highest_salary,
-  kind VIEW
-);
-
-SELECT
-  MAX(salary)
-FROM db.employees;
-```
-
-### Materialized Views
-The `VIEW` model kind can be configured to represent a materialized view by setting the `materialized` flag to `true`:
-```sql linenums="1" hl_lines="4"
-MODEL (
-  name db.highest_salary,
-  kind VIEW (
-    materialized true
-  )
-);
-```
-
-**Note:** This flag only applies to engines that support materialized views and is ignored by other engines. Supported engines include:
-
-* BigQuery
-* Databricks
-* Snowflake
-
-During the evaluation of a model of this kind, the view will be replaced or recreated only if the model's query rendered during evaluation does not match the query used during the previous view creation for this model, or if the target view does not exist. Thus, views are recreated only when necessary in order to realize all the benefits provided by materialized views.
-
-## EMBEDDED
-Embedded models are a way to share common logic between different models of other kinds.
-
-There are no data assets (tables or views) associated with `EMBEDDED` models in the data warehouse. Instead, an `EMBEDDED` model's query is injected directly into the query of each downstream model that references it, as a subquery.
-
-This example specifies a `EMBEDDED` model kind:
-```sql linenums="1" hl_lines="3"
-MODEL (
-  name db.unique_employees,
-  kind EMBEDDED
-);
-
-SELECT DISTINCT
-  name
-FROM db.employees;
-```
+They are optional but useful for propagating column and type information for external tables queried in your SQLMesh project.
 
 ## SEED
 The `SEED` model kind is used to specify [seed models](./seed_models.md) for using static CSV datasets in your SQLMesh project.
+
+## MANAGED
+
+!!! warning "Under construction"
+
+    Managed models are still under development and the API / semantics may change as support for more engines is added.
+
+The `MANAGED` model kind is used to create models where the underlying database engine manages the data lifecycle.
+
+These models don't get updated with new intervals or refreshed when `sqlmesh run` is called. Responsibility for keeping the *data* up to date falls on the engine.
+
+You can control how the engine creates the managed model by using the [`physical_properties`](../overview#physical_properties-previously-table_properties) to pass engine-specific parameters for adapter to use when issuing commands to the underlying database.
+
+Due to there being no standard, each vendor has a different implementation with different semantics and different configuration parameters. Therefore, `MANAGED` models are not as portable between database engines as other SQLMesh model types. In addition, due to their black-box nature, SQLMesh has limited visibility into the integrity and state of the model.
+
+We would recommend using standard SQLMesh model types in the first instance. However, if you do need to use Managed models, you still gain other SQLMesh benefits like the ability to use them in [virtual environments](../../concepts/overview#build-a-virtual-environment).
+
+See [Managed Models](./managed_models.md) for more information on which engines are supported and which properties are available.
 
 ## SCD Type 2
 
@@ -997,24 +767,294 @@ MODEL (
 
 Plan/apply this change to production.
 
-## EXTERNAL
+## EMBEDDED
+Embedded models are a way to share common logic between different models of other kinds.
 
-The EXTERNAL model kind is used to specify [external models](./external_models.md) that store metadata about external tables. External models are special; they are not specified in .sql files like the other model kinds. They are optional but useful for propagating column and type information for external tables queried in your SQLMesh project.
+There are no data assets (tables or views) associated with `EMBEDDED` models in the data warehouse. Instead, an `EMBEDDED` model's query is injected directly into the query of each downstream model that references it, as a subquery.
 
-## MANAGED
+This example specifies a `EMBEDDED` model kind:
+```sql linenums="1" hl_lines="3"
+MODEL (
+  name db.unique_employees,
+  kind EMBEDDED
+);
 
-!!! warning
+SELECT DISTINCT
+  name
+FROM db.employees;
+```
 
-    Managed models are still under development and the API / semantics may change as support for more engines is added
+## INCREMENTAL_BY_UNIQUE_KEY
 
-The `MANAGED` model kind is used to create models where the underlying database engine manages the data lifecycle.
+Models of the `INCREMENTAL_BY_UNIQUE_KEY` kind are computed incrementally based on a key that is unique for each data row.
 
-These models don't get updated with new intervals or refreshed when `sqlmesh run` is called. Responsibility for keeping the *data* up to date falls on the engine.
+If a key in newly loaded data is not present in the model table, the new data row is inserted. If a key in newly loaded data is already present in the model table, the existing row is updated with the new data. If a key is present in the model table but not present in the newly loaded data, its row is not modified and remains in the model table.
 
-You can control how the engine creates the managed model by using the [`physical_properties`](../overview#physical_properties-previously-table_properties) to pass engine-specific parameters for adapter to use when issuing commands to the underlying database.
+This kind is a good fit for datasets that have the following traits:
 
-Due to there being no standard, each vendor has a different implementation with different semantics and different configuration parameters. Therefore, `MANAGED` models are not as portable between database engines as other SQLMesh model types. In addition, due to their black-box nature, SQLMesh has limited visibility into the integrity and state of the model.
+* Each record has a unique key associated with it.
+* There is at most one record associated with each unique key.
+* It is appropriate to upsert records, so existing records can be overwritten by new arrivals when their keys match.
 
-We would recommend using standard SQLMesh model types in the first instance. However, if you do need to use Managed models, you still gain other SQLMesh benefits like the ability to use them in [virtual environments](../../concepts/overview#build-a-virtual-environment).
+A [Slowly Changing Dimension](../glossary.md#slowly-changing-dimension-scd) (SCD) is one approach that fits this description well. See the [SCD Type 2](#scd-type-2) model kind for a specific model kind for SCD Type 2 models.
 
-See [Managed Models](./managed_models.md) for more information on which engines are supported and which properties are available.
+The name of the unique key column must be provided as part of the `MODEL` DDL, as in this example:
+```sql linenums="1" hl_lines="3-5"
+MODEL (
+  name db.employees,
+  kind INCREMENTAL_BY_UNIQUE_KEY (
+    unique_key name
+  )
+);
+
+SELECT
+  name::TEXT as name,
+  title::TEXT as title,
+  salary::INT as salary
+FROM raw_employees;
+```
+
+Composite keys are also supported:
+```sql linenums="1" hl_lines="4"
+MODEL (
+  name db.employees,
+  kind INCREMENTAL_BY_UNIQUE_KEY (
+    unique_key (first_name, last_name)
+  )
+);
+```
+
+`INCREMENTAL_BY_UNIQUE_KEY` model kinds can also filter upstream records by time range using a SQL `WHERE` clause and the `@start_date`, `@end_date` or other macro variables (similar to the [INCREMENTAL_BY_TIME_RANGE](#incremental_by_time_range) kind). Note that SQLMesh macro time variables are in the UTC time zone.
+```sql linenums="1" hl_lines="6-7"
+SELECT
+  name::TEXT as name,
+  title::TEXT as title,
+  salary::INT as salary
+FROM raw_employee_events
+WHERE
+  event_date BETWEEN @start_date AND @end_date;
+```
+
+**Note:** Models of the `INCREMENTAL_BY_UNIQUE_KEY` kind are inherently [non-idempotent](../glossary.md#idempotency), which should be taken into consideration during data [restatement](../plans.md#restatement-plans). As a result, partial data restatement is not supported for this model kind, which means that the entire table will be recreated from scratch if restated.
+
+### Unique Key Expressions
+
+The `unique_key` values can either be column names or SQL expressions. For example, if you wanted to create a key that is based on the coalesce of a value then you could do the following:
+
+```sql linenums="1" hl_lines="4"
+MODEL (
+  name db.employees,
+  kind INCREMENTAL_BY_UNIQUE_KEY (
+    unique_key COALESCE("name", '')
+  )
+);
+```
+
+### When Matched Expression
+
+The logic to use when updating columns when a match occurs (the source and target match on the given keys) by default updates all the columns. This can be overriden with custom logic like below:
+
+```sql linenums="1" hl_lines="5"
+MODEL (
+  name db.employees,
+  kind INCREMENTAL_BY_UNIQUE_KEY (
+    unique_key name,
+    when_matched (
+      WHEN MATCHED THEN UPDATE SET target.salary = COALESCE(source.salary, target.salary)
+    )
+  )
+);
+```
+
+The `source` and `target` aliases are required when using the `when_matched` expression in order to distinguish between the source and target columns.
+
+Multiple `WHEN MATCHED` expressions can also be provided. Ex:
+
+```sql linenums="1" hl_lines="5-6"
+MODEL (
+  name db.employees,
+  kind INCREMENTAL_BY_UNIQUE_KEY (
+    unique_key name,
+    when_matched (
+      WHEN MATCHED AND source.value IS NULL THEN UPDATE SET target.salary = COALESCE(source.salary, target.salary)
+      WHEN MATCHED THEN UPDATE SET target.title = COALESCE(source.title, target.title)
+    )
+  )
+);
+```
+
+**Note**: `when_matched` is only available on engines that support the `MERGE` statement. Currently supported engines include:
+
+* BigQuery
+* Databricks
+* Postgres
+* Redshift
+* Snowflake
+* Spark
+
+Redshift supports only the `UPDATE` or `DELETE` actions for the `WHEN MATCHED` clause and does not allow multiple `WHEN MATCHED` expressions. For further information, refer to the [Redshift documentation](https://docs.aws.amazon.com/redshift/latest/dg/r_MERGE.html#r_MERGE-parameters).
+
+### Merge Filter Expression
+
+The `MERGE` statement typically induces a full table scan of the existing table, which can be problematic with large data volumes.
+
+Prevent a full table scan by passing filtering conditions to the `merge_filter` parameter.
+
+The `merge_filter` accepts a single or a conjunction of predicates to be used in the `ON` clause of the `MERGE` operation:
+
+```sql linenums="1" hl_lines="5"
+MODEL (
+  name db.employee_contracts,
+  kind INCREMENTAL_BY_UNIQUE_KEY (
+    unique_key id,
+    merge_filter source._operation IS NULL AND target.contract_date > dateadd(day, -7, current_date)
+  )
+);
+```
+
+Similar to `when_matched`, the `source` and `target` aliases are used to distinguish between the source and target tables.
+
+If an existing dbt project uses the [incremental_predicates](https://docs.getdbt.com/docs/build/incremental-strategy#about-incremental_predicates) functionality, SQLMesh will automatically convert them into the equivalent `merge_filter` specification.
+
+### Materialization strategy
+Depending on the target engine, models of the `INCREMENTAL_BY_UNIQUE_KEY` kind are materialized using the following strategies:
+
+| Engine     | Strategy                            |
+|------------|-------------------------------------|
+| Spark      | not supported                       |
+| Databricks | MERGE ON unique key                 |
+| Snowflake  | MERGE ON unique key                 |
+| BigQuery   | MERGE ON unique key                 |
+| Redshift   | MERGE ON unique key                 |
+| Postgres   | MERGE ON unique key                 |
+| DuckDB     | DELETE ON matched + INSERT new rows |
+
+
+## INCREMENTAL_BY_PARTITION
+
+Models of the `INCREMENTAL_BY_PARTITION` kind are computed incrementally based on partition. A set of columns defines the model's partitioning key, and a partition is the group of rows with the same partitioning key value.
+
+!!! info "Should you use this model kind?"
+
+    Any model kind can use a partitioned table by specifying the [`partitioned_by` key](../models/overview.md#partitioned_by) in the `MODEL` DDL. The "partition" in `INCREMENTAL_BY_PARTITION` is about how the data is **loaded** when the model runs.
+
+    `INCREMENTAL_BY_PARTITION` models are inherently [non-idempotent](../glossary.md#idempotency), so restatements and other actions can cause data loss. This makes them more complex to manage than other model kinds.
+
+    In most scenarios, an `INCREMENTAL_BY_TIME_RANGE` model can meet your needs and will be easier to manage. The `INCREMENTAL_BY_PARTITION` model kind should only be used when the data must be loaded by partition (usually for performance reasons).
+
+This model kind is designed for the scenario where data rows should be loaded and updated as a group based on their shared value for the partitioning key.
+
+It may be used with any SQL engine. SQLMesh will automatically create partitioned tables on engines that support explicit table partitioning (e.g., [BigQuery](https://cloud.google.com/bigquery/docs/creating-partitioned-tables), [Databricks](https://docs.databricks.com/en/sql/language-manual/sql-ref-partition.html)).
+
+New rows are loaded based on their partitioning key value:
+
+- If a partitioning key in newly loaded data is not present in the model table, the new partitioning key and its data rows are inserted.
+- If a partitioning key in newly loaded data is already present in the model table, **all the partitioning key's existing data rows in the model table are replaced** with the partitioning key's data rows in the newly loaded data.
+- If a partitioning key is present in the model table but not present in the newly loaded data, the partitioning key's existing data rows are not modified and remain in the model table.
+
+This kind should only be used for datasets that have the following traits:
+
+* The dataset's records can be grouped by a partitioning key.
+* Each record has a partitioning key associated with it.
+* It is appropriate to upsert records, so existing records can be overwritten by new arrivals when their partitioning keys match.
+* All existing records associated with a given partitioning key can be removed or overwritten when any new record has the partitioning key value.
+
+The column defining the partitioning key is specified in the model's `MODEL` DDL `partitioned_by` key. This example shows the `MODEL` DDL for an `INCREMENTAL_BY_PARTITION` model whose partition key is the row's value for the `region` column:
+
+```sql linenums="1" hl_lines="4"
+MODEL (
+  name db.events,
+  kind INCREMENTAL_BY_PARTITION,
+  partitioned_by region,
+);
+```
+
+Compound partition keys are also supported, such as `region` and `department`:
+
+```sql linenums="1" hl_lines="4"
+MODEL (
+  name db.events,
+  kind INCREMENTAL_BY_PARTITION,
+  partitioned_by (region, department),
+);
+```
+
+Date and/or timestamp column expressions are also supported (varies by SQL engine). This BigQuery example's partition key is based on the month each row's `event_date` occurred:
+
+```sql linenums="1" hl_lines="4"
+MODEL (
+  name db.events,
+  kind INCREMENTAL_BY_PARTITION,
+  partitioned_by DATETIME_TRUNC(event_date, MONTH)
+);
+```
+
+!!! warning "Only full restatements supported"
+
+    Partial data [restatements](../plans.md#restatement-plans) are used to reprocess part of a table's data (usually a limited time range).
+
+    Partial data restatement is not supported for `INCREMENTAL_BY_PARTITION` models. If you restate an `INCREMENTAL_BY_PARTITION` model, its entire table will be recreated from scratch.
+
+    Restating `INCREMENTAL_BY_PARTITION` models may lead to data loss and should be performed with care.
+
+### Example
+
+This is a fuller example of how you would use this model kind in practice. It limits the number of partitions to backfill based on time range in the `partitions_to_update` CTE.
+
+```sql linenums="1"
+MODEL (
+  name demo.incremental_by_partition_demo,
+  kind INCREMENTAL_BY_PARTITION,
+  partitioned_by user_segment,
+);
+
+-- This is the source of truth for what partitions need to be updated and will join to the product usage data
+-- This could be an INCREMENTAL_BY_TIME_RANGE model that reads in the user_segment values last updated in the past 30 days to reduce scope
+-- Use this strategy to reduce full restatements
+WITH partitions_to_update AS (
+  SELECT DISTINCT
+    user_segment
+  FROM demo.incremental_by_time_range_demo  -- upstream table tracking which user segments to update
+  WHERE last_updated_at BETWEEN DATE_SUB(@start_dt, INTERVAL 30 DAY) AND @end_dt
+),
+
+product_usage AS (
+  SELECT
+    product_id,
+    customer_id,
+    last_usage_date,
+    usage_count,
+    feature_utilization_score,
+    user_segment
+  FROM sqlmesh-public-demo.tcloud_raw_data.product_usage
+  WHERE user_segment IN (SELECT user_segment FROM partitions_to_update) -- partition filter applied here
+)
+
+SELECT
+  product_id,
+  customer_id,
+  last_usage_date,
+  usage_count,
+  feature_utilization_score,
+  user_segment,
+  CASE
+    WHEN usage_count > 100 AND feature_utilization_score > 0.7 THEN 'Power User'
+    WHEN usage_count > 50 THEN 'Regular User'
+    WHEN usage_count IS NULL THEN 'New User'
+    ELSE 'Light User'
+  END as user_type
+FROM product_usage
+```
+
+### Materialization strategy
+Depending on the target engine, models of the `INCREMENTAL_BY_PARTITION` kind are materialized using the following strategies:
+
+| Engine     | Strategy                                |
+|------------|-----------------------------------------|
+| Databricks | REPLACE WHERE by partitioning key       |
+| Spark      | INSERT OVERWRITE by partitioning key    |
+| Snowflake  | DELETE by partitioning key, then INSERT |
+| BigQuery   | DELETE by partitioning key, then INSERT |
+| Redshift   | DELETE by partitioning key, then INSERT |
+| Postgres   | DELETE by partitioning key, then INSERT |
+| DuckDB     | DELETE by partitioning key, then INSERT |
