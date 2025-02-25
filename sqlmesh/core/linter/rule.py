@@ -6,18 +6,11 @@ import operator as op
 from collections.abc import Iterator, Set, Iterable, MutableMapping, Callable
 from functools import reduce
 
-import typing as t
-
-from typing import overload, TypeVar
-
-
-from sqlglot import exp
-
 from sqlmesh.core.model import Model
 
-from sqlmesh.utils.pydantic import PydanticModel
+import typing as t
 
-T = TypeVar("T")
+T = t.TypeVar("T")
 
 
 class Rule(abc.ABC):
@@ -33,7 +26,7 @@ class Rule(abc.ABC):
     @property
     @abc.abstractmethod
     def summary(self) -> str:
-        """A one-line summary of what this rule checks for."""
+        """A summary of what this rule checks for."""
 
     @property
     def name(self) -> str:
@@ -55,10 +48,10 @@ class Rule(abc.ABC):
         return self.name
 
 
-class RuleViolation(PydanticModel):
-    rule: Rule
-    model: Model
-    anchor_exprs: t.Optional[t.List[exp.Expression]] = None
+class RuleViolation:
+    def __init__(self, rule: Rule, model: Model) -> None:
+        self.rule = rule
+        self.model = model
 
     @property
     def message(self) -> str:
@@ -116,65 +109,11 @@ class RuleSet(MutableMapping[str, type[Rule]], Set[type[Rule]]):
             result[rule_name] = other[rule_name] if rule_name in other else self[rule_name]
         return result
 
-    @overload
-    def __or__(self, other: RuleSet) -> RuleSet: ...
+    def union(self, *others: RuleSet) -> RuleSet:
+        return reduce(lambda lhs, rhs: lhs.__op(op.or_, rhs), (self, *others))
 
-    @overload
-    def __or__(self, other: Set[T]) -> Set[type[Rule] | T]: ...
+    def intersection(self, *others: RuleSet) -> RuleSet:
+        return reduce(lambda lhs, rhs: lhs.__op(op.and_, rhs), (self, *others))
 
-    def __or__(self, other: Set[T]) -> Set[type[Rule] | T]:
-        if isinstance(other, RuleSet):
-            return self.__op(op.or_, other)
-
-        return super().__or__(other)
-
-    @overload
-    def __and__(self, other: RuleSet) -> RuleSet: ...
-
-    @overload
-    def __and__(self, other: Set[T]) -> Set[type[Rule] | T]: ...
-
-    def __and__(self, other: Set[T]) -> Set[type[Rule] | T]:
-        if isinstance(other, RuleSet):
-            return self.__op(op.and_, other)
-
-        return super().__and__(other)
-
-    @overload
-    def __sub__(self, other: RuleSet) -> RuleSet: ...
-
-    @overload
-    def __sub__(self, other: Set[T]) -> Set[type[Rule] | T]: ...
-
-    def __sub__(self, other: Set[T]) -> Set[type[Rule] | T]:
-        if isinstance(other, RuleSet):
-            return self.__op(op.sub, other)
-
-        return super().__sub__(other)
-
-    @overload
-    def union(self, *others: RuleSet) -> RuleSet: ...
-
-    @overload
-    def union(self, *others: Set[T]) -> Set[type[Rule] | T]: ...
-
-    def union(self, *others: Set[T]) -> Set[type[Rule] | T]:
-        return reduce(op.or_, (self, *others))
-
-    @overload
-    def intersection(self, *others: RuleSet) -> RuleSet: ...
-
-    @overload
-    def intersection(self, *others: Set[T]) -> Set[type[Rule] | T]: ...
-
-    def intersection(self, *others: Set[T]) -> Set[type[Rule] | T]:
-        return reduce(op.and_, (self, *others))
-
-    @overload
-    def difference(self, *others: RuleSet) -> RuleSet: ...
-
-    @overload
-    def difference(self, *others: Set[T]) -> Set[type[Rule] | T]: ...
-
-    def difference(self, *others: Set[T]) -> Set[type[Rule] | T]:
-        return reduce(op.sub, (self, *others))
+    def difference(self, *others: RuleSet) -> RuleSet:
+        return reduce(lambda lhs, rhs: lhs.__op(op.sub, rhs), (self, *others))

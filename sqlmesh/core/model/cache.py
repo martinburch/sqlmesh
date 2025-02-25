@@ -81,9 +81,9 @@ class OptimizedQueryCache:
         path: The path to the cache folder.
     """
 
-    def __init__(self, path: Path, lint_cfg: t.Optional[LinterConfig] = None):
+    def __init__(self, path: Path, lint_config: t.Optional[LinterConfig] = None):
         self.path = path
-        self.lint_cfg = lint_cfg
+        self.lint_config = lint_config
         self._file_cache: FileCache[OptimizedQueryCacheEntry] = FileCache(
             path, prefix="optimized_query"
         )
@@ -133,10 +133,10 @@ class OptimizedQueryCache:
     def _put(self, name: str, model: SqlModel) -> None:
         optimized_query = model.render_query()
 
-        if self.lint_cfg:
+        if self.lint_config:
             for violated_rule in model._render_violations:
                 # Do not cache the optimized query if the renderer came across lint errors
-                if violated_rule.__name__.lower() in self.lint_cfg.rules:
+                if violated_rule.__name__.lower() in self.lint_config.rules:
                     return None
 
         new_entry = OptimizedQueryCacheEntry(optimized_rendered_query=optimized_query)

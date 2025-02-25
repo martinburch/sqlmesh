@@ -7,17 +7,20 @@ from sqlmesh.core.model import Model
 
 from sqlmesh.utils.errors import raise_config_error
 from sqlmesh.core.console import get_console
+from sqlmesh.core.linter.rule import RuleSet
 
 
 class Linter:
-    def __init__(self, config: LinterConfig) -> None:
-        self.config = config
+    def __init__(self, ALL_RULES: RuleSet, rules: RuleSet, warn_rules: RuleSet) -> None:
+        self.ALL_RULES = ALL_RULES
+        self.rules = rules
+        self.warn_rules = warn_rules
 
     def lint(self, model: Model) -> None:
-        model_noqa = self.config.gather_rules(model.ignore_lints or [])
+        ignored_rules = LinterConfig.gather_rules(self.ALL_RULES, model.ignore_lints)
 
-        rules = self.config.rules.difference(model_noqa)
-        warn_rules = self.config.warn_rules.difference(model_noqa)
+        rules = self.rules.difference(ignored_rules)
+        warn_rules = self.warn_rules.difference(ignored_rules)
 
         error_violations = rules.check(model)
         warn_violations = warn_rules.check(model)

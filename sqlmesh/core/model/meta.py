@@ -76,8 +76,7 @@ class ModelMeta(_Node):
     physical_version: t.Optional[str] = None
     gateway: t.Optional[str] = None
     optimize_query: t.Optional[bool] = None
-
-    ignore_lints_: t.Optional[t.Union[t.List[str], str]] = Field(
+    ignore_lints_: t.Optional[t.Union[t.List[str], t.Literal["ALL"]]] = Field(
         default=None, exclude=True, alias="ignore_lints"
     )
 
@@ -463,8 +462,8 @@ class ModelMeta(_Node):
         return getattr(self.kind, "on_destructive_change", OnDestructiveChange.ALLOW)
 
     @property
-    def ignore_lints(self) -> t.Optional[t.Union[t.List[str], str]]:
+    def ignore_lints(self) -> t.Union[t.List[str], str]:
         if not self.ignore_lints_:
-            return None
+            return []
 
         return self.ignore_lints_

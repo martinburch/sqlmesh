@@ -296,7 +296,7 @@ def test_model_qualification(tmp_path: Path):
 
         ctx = Context(config=Config(), paths=tmp_path)
         ctx.upsert_model(load_sql_based_model(expressions))
-        print(f"mock {mock_logger.call_args[0][0]}")
+
         assert (
             """Column '"a"' could not be resolved for model '"db"."table"', the column may not exist or is ambiguous."""
             in mock_logger.call_args[0][0]
@@ -2508,10 +2508,10 @@ def test_model_cache_gateway(tmp_path: Path, mocker: MockerFixture):
     patched_cache_put = mocker.patch("sqlmesh.utils.cache.FileCache.put")
 
     Context(paths=tmp_path, config=config)
-    assert patched_cache_put.call_count == 2
+    assert patched_cache_put.call_count == 0
 
     Context(paths=tmp_path, config=config, gateway="secondary")
-    assert patched_cache_put.call_count == 6
+    assert patched_cache_put.call_count == 4
 
 
 @pytest.mark.slow
@@ -7813,3 +7813,28 @@ def test_seed_dont_coerce_na_into_null(tmp_path):
     assert model.seed is not None
     assert len(model.seed.content) > 0
     assert next(model.render(context=None)).to_dict() == {"code": {0: "NA"}}
+
+
+def test_ignore_lints_serialization():
+    expressions = d.parse(
+        """
+        MODEL(
+            name test_model,
+            ignore_lints ['foo', 'bar']
+        );
+
+        SELECT * FROM tbl;
+    """,
+        default_dialect="bigquery",
+    )
+
+    model = load_sql_based_model(expressions)
+
+    model_json = model.json()
+    model_json_parsed = json.loads(model_json)
+
+    assert "ignore_lints" not in model_json_parsed
+    assert "ignore_lints_" not in model_json_parsed
+
+    deserialized_model = SqlModel.parse_raw(model_json)
+    assert deserialized_model.dict() == model.dict()

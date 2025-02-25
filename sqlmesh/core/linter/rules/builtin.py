@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import typing as t
 
-from sqlglot import exp
 
 from sqlmesh.core.linter.rule import Rule, RuleViolation
 from sqlmesh.core.model import Model, SqlModel
@@ -15,21 +14,11 @@ class NoSelectStar(Rule):
         if not isinstance(model, SqlModel):
             return None
 
-        anchor_exprs = []
-        for star in model.query.find_all(exp.Star):
-            parent = star.parent
-            if isinstance(parent, exp.Select):
-                anchor_exprs.append(parent)
-
-        return (
-            RuleViolation(rule=self, model=model, anchor_exprs=anchor_exprs)
-            if anchor_exprs
-            else None
-        )
+        return RuleViolation(rule=self, model=model) if model.query.is_star else None
 
     @property
     def summary(self) -> str:
-        return "Query should not contain any SELECT *, even if they can be expanded."
+        return "Query should not contain SELECT * on its outer most projections, even if it can be expanded."
 
 
 class InvalidSelectStarExpansion(Rule):
@@ -37,7 +26,7 @@ class InvalidSelectStarExpansion(Rule):
         if not model._render_violations:
             return None
 
-        deps = model._render_violations.get(InvalidSelectStarExpansion, None)
+        deps = model._render_violations.get(InvalidSelectStarExpansion)
         if not deps:
             return None
 
@@ -59,7 +48,7 @@ class AmbiguousOrInvalidColumn(Rule):
         if not model._render_violations:
             return None
 
-        sqlglot_err = model._render_violations.get(AmbiguousOrInvalidColumn, None)
+        sqlglot_err = model._render_violations.get(AmbiguousOrInvalidColumn)
         if not sqlglot_err:
             return None
 

@@ -30,6 +30,7 @@ if t.TYPE_CHECKING:
     from sqlglot.dialects.dialect import DialectType
 
     from sqlmesh.core.snapshot import DeployabilityIndex, Snapshot
+    from sqlmesh.core.linter.rule import Rule
 
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class BaseExpressionRenderer:
         self._cache: t.List[t.Optional[exp.Expression]] = []
         self._model_fqn = model_fqn
         self._optimize_query_flag = optimize_query is not False
-        self._violated_rules: t.Dict[t.Any, t.Any] = {}
+        self._violated_rules: t.Dict[type[Rule], t.Any] = {}
 
     def update_schema(self, schema: t.Dict[str, t.Any]) -> None:
         self.schema = d.normalize_mapping_schema(schema, dialect=self._dialect)
@@ -494,7 +495,7 @@ class QueryRenderer(BaseExpressionRenderer):
 
                 query = self._optimize_query(query, deps)
 
-                if should_cache:
+                if should_cache and not self._violated_rules:
                     self._optimized_cache = query
 
         if needs_optimization:
@@ -522,6 +523,11 @@ class QueryRenderer(BaseExpressionRenderer):
             super().update_cache(expression)
 
     def _optimize_query(self, query: exp.Query, all_deps: t.Set[str]) -> exp.Query:
+        from sqlmesh.core.linter.rules.builtin import (
+            AmbiguousOrInvalidColumn,
+            InvalidSelectStarExpansion,
+        )
+
         # We don't want to normalize names in the schema because that's handled by the optimizer
         original = query
         missing_deps = set()
@@ -534,8 +540,6 @@ class QueryRenderer(BaseExpressionRenderer):
                 missing_deps.add(dep)
 
         if self._model_fqn and not should_optimize and any(s.is_star for s in query.selects):
-            from sqlmesh.core.linter.rules.builtin import InvalidSelectStarExpansion
-
             deps = ", ".join(f"'{dep}'" for dep in sorted(missing_deps))
             self._violated_rules[InvalidSelectStarExpansion] = deps
 
@@ -556,8 +560,6 @@ class QueryRenderer(BaseExpressionRenderer):
                     )
                 )
         except SqlglotError as ex:
-            from sqlmesh.core.linter.rules.builtin import AmbiguousOrInvalidColumn
-
             self._violated_rules[AmbiguousOrInvalidColumn] = ex
 
             query = original

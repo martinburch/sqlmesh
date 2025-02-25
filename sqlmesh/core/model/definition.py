@@ -64,6 +64,7 @@ if t.TYPE_CHECKING:
     from sqlmesh.core.context import ExecutionContext
     from sqlmesh.core.engine_adapter import EngineAdapter
     from sqlmesh.core.engine_adapter._typing import QueryOrDF
+    from sqlmesh.core.linter.rule import Rule
     from sqlmesh.core.snapshot import DeployabilityIndex, Node, Snapshot
     from sqlmesh.utils.jinja import MacroReference
 
@@ -140,7 +141,7 @@ class _Model(ModelMeta, frozen=True):
 
     _full_depends_on: t.Optional[t.Set[str]] = None
     _statement_renderer_cache: t.Dict[int, ExpressionRenderer] = {}
-    _render_violations: t.Dict[t.Any, t.Any] = {}
+    _render_violations: t.Dict[type[Rule], t.Any] = {}
 
     pre_statements_: t.Optional[t.List[exp.Expression]] = Field(
         default=None, alias="pre_statements"

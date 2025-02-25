@@ -11,11 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlglot.errors import SqlglotError
+from sqlglot.helper import subclasses
 
 from sqlmesh.core import constants as c
 from sqlmesh.core.audit import Audit, ModelAudit, StandaloneAudit, load_multiple_audits
 from sqlmesh.core.dialect import parse
-from sqlmesh.core.linter.rule import RuleSet
+from sqlmesh.core.linter.rule import RuleSet, Rule
 from sqlmesh.core.macros import MacroRegistry, macro
 from sqlmesh.core.metric import Metric, MetricMeta, expand_metrics, load_metric_ddl
 from sqlmesh.core.model import (
@@ -604,19 +605,18 @@ class SqlMeshLoader(Loader):
         return metrics
 
     def _load_linting_rules(self) -> RuleSet:
-        rs = None
+        user_rules = []
         for path in self._glob_paths(
             self.config_path / c.LINTER,
             ignore_patterns=self.config.ignore_patterns,
             extension=".py",
         ):
             if os.path.getsize(path):
+                self._track_file(path)
                 module = import_python_file(path, self.config_path)
-                if hasattr(module, "USER_RULES"):
-                    rs = module.USER_RULES
-                    break
+                user_rules.extend(subclasses(module.__name__, Rule, (Rule,)))
 
-        return rs or RuleSet()
+        return RuleSet(user_rules)
 
     class _Cache:
         def __init__(self, loader: SqlMeshLoader, config_path: Path):

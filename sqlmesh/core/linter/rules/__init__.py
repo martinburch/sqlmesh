@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from sqlmesh.core.linter.rule import RuleSet
+from sqlglot.helper import subclasses
+
+from sqlmesh.core.linter.rule import RuleSet, Rule
 from sqlmesh.core.linter.rules.builtin import (
-    AmbiguousOrInvalidColumn,
-    InvalidSelectStarExpansion,
-    NoSelectStar,
+    AmbiguousOrInvalidColumn as AmbiguousOrInvalidColumn,
+    InvalidSelectStarExpansion as InvalidSelectStarExpansion,
+    NoSelectStar as NoSelectStar,
 )
 
-BUILTIN_RULES = RuleSet.from_args(
-    NoSelectStar,
-    InvalidSelectStarExpansion,
-    AmbiguousOrInvalidColumn,
-)
+BUILTIN_RULES = RuleSet(subclasses(__name__, Rule, (Rule,)))
