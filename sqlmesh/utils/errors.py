@@ -176,10 +176,6 @@ class MissingDefaultCatalogError(SQLMeshError):
     pass
 
 
-class LinterError(SQLMeshError):
-    pass
-
-
 def raise_config_error(
     msg: str,
     location: t.Optional[str | Path] = None,
