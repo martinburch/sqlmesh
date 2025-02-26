@@ -10,8 +10,6 @@ from sqlmesh.core.model import Model
 
 import typing as t
 
-T = t.TypeVar("T")
-
 
 class Rule(abc.ABC):
     """The base class for a rule."""
