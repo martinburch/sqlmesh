@@ -92,7 +92,6 @@ class RuleSet(Mapping[str, type[Rule]]):
         rules = set()
         for rule in op(set(self.values()), set(other.values())):
             rule_name = rule.__name__.lower()
-            # result[rule_name] = other[rule_name] if rule_name in other else self[rule_name]
             rules.add(other[rule_name] if rule_name in other else self[rule_name])
 
         return RuleSet(rules)
