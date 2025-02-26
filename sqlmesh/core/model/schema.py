@@ -18,19 +18,17 @@ if t.TYPE_CHECKING:
     from sqlmesh.core.model.definition import Model
     from sqlmesh.utils import UniqueKeyDict
     from sqlmesh.utils.dag import DAG
-    from sqlmesh.core.config import LinterConfig
+    from sqlmesh.core.linter.definition import Linter
 
 
 def update_model_schemas(
     dag: DAG[str],
     models: UniqueKeyDict[str, Model],
     context_path: Path,
-    lint_config: t.Optional[LinterConfig] = None,
+    linter: t.Optional[Linter] = None,
 ) -> None:
     schema = MappingSchema(normalize=False)
-    optimized_query_cache: OptimizedQueryCache = OptimizedQueryCache(
-        context_path / c.CACHE, lint_config
-    )
+    optimized_query_cache: OptimizedQueryCache = OptimizedQueryCache(context_path / c.CACHE, linter)
 
     if c.MAX_FORK_WORKERS == 1:
         _update_model_schemas_sequential(dag, models, schema, optimized_query_cache)

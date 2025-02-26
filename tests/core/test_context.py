@@ -31,6 +31,7 @@ from sqlmesh.core.console import create_console
 from sqlmesh.core.dialect import parse, schema_
 from sqlmesh.core.engine_adapter.duckdb import DuckDBEngineAdapter
 from sqlmesh.core.environment import Environment
+from sqlmesh.core.macros import MacroEvaluator
 from sqlmesh.core.model import load_sql_based_model, model, SqlModel
 from sqlmesh.core.model.cache import OptimizedQueryCache
 from sqlmesh.core.model.kind import ModelKindName
@@ -1373,7 +1374,7 @@ def test_plan_runs_audits_on_dev_previews(sushi_context: Context, capsys, caplog
 
 @pytest.mark.slow
 def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
-    cfg = LinterConfig(rules="ALL")
+    cfg = LinterConfig(enabled=True, rules="ALL")
     ctx = Context(
         config=Config(model_defaults=ModelDefaultsConfig(dialect="duckdb"), linter=cfg),
         paths=tmp_path,
@@ -1381,13 +1382,11 @@ def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
 
     # Case: Ensure load DOES NOT work if linter is enabled
     for query in ("SELECT * FROM tbl", "SELECT t.* FROM tbl"):
-        model = load_sql_based_model(d.parse(f"MODEL (name test); {query}"))
-
         with pytest.raises(
             ConfigError,
             match=r".*Query should not contain SELECT.*",
         ):
-            ctx.upsert_model(model)
+            ctx.upsert_model(load_sql_based_model(d.parse(f"MODEL (name test); {query}")))
 
     model2 = load_sql_based_model(d.parse("MODEL (name test2); SELECT col"))
     with pytest.raises(
@@ -1397,7 +1396,7 @@ def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
         ctx.upsert_model(model2)
 
     # Case: Ensure optimized query is not cached if the model did not pass linting
-    cache = OptimizedQueryCache(tmp_path, lint_config=ctx.config.linter)
+    cache = OptimizedQueryCache(tmp_path / c.CACHE, linter=ctx._linter)
 
     model2 = t.cast(SqlModel, model2)
     assert model2._query_renderer._optimized_cache is None
@@ -1423,21 +1422,18 @@ def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
         ctx.config.linter = cfg
         ctx.load()
 
-    # Case #3: Ensure load DOES NOT work if LinterConfig has overlapping rules
-    invalid_cfgs_dict = [
-        {"rules": ["noselectstar"], "warn_rules": ["noselectstar"]},
-    ]
+    # Case: Ensure load DOES NOT work if LinterConfig has overlapping rules
+    with pytest.raises(
+        ConfigError,
+        match=r"Found overlapping rules \[noselectstar\] in lint config.",
+    ):
+        ctx.config.linter = LinterConfig(
+            enabled=True, rules=["noselectstar"], warn_rules=["noselectstar"]
+        )
+        ctx.load()
 
-    for dict in invalid_cfgs_dict:
-        with pytest.raises(
-            ConfigError,
-            match=r"Found overlapping rules \[noselectstar\] in lint config.",
-        ):
-            ctx.config.linter = LinterConfig(**dict)
-            ctx.load()
-
-    # Case #4: Ensure model attribute overrides global config
-    ctx.config.linter = LinterConfig(rules=["noselectstar"])
+    # Case: Ensure model attribute overrides global config
+    ctx.config.linter = LinterConfig(enabled=True, rules=["noselectstar"])
 
     create_temp_file(
         tmp_path,
@@ -1453,7 +1449,8 @@ def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
 
     ctx.load()
 
-    sushi_context.config.linter = LinterConfig(rules="ALL")
+    # Case: Ensure we can load & use the user-defined rules
+    sushi_context.config.linter = LinterConfig(enabled=True, rules="ALL")
     sushi_context.upsert_model(
         load_sql_based_model(
             d.parse("MODEL (name sushi.test); SELECT col FROM (SELECT * FROM tbl)"),
@@ -1465,3 +1462,37 @@ def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
         match=r".*All models should have an owner.*",
     ):
         sushi_context.load()
+
+    # Case: Ensure the Linter also picks up Python model violations
+    @model(name="memory.sushi.model3", is_sql=True, kind="full", dialect="snowflake")
+    def model3_entrypoint(evaluator: MacroEvaluator) -> str:
+        return "select * from model1"
+
+    model3 = model.get_registry()["memory.sushi.model3"].model(
+        module_path=Path("."), path=Path(".")
+    )
+
+    @model(name="memory.sushi.model4", columns={"col": "int"})
+    def model4_entrypoint(context, **kwargs):
+        yield pd.DataFrame({"col": []})
+
+    model4 = model.get_registry()["memory.sushi.model4"].model(
+        module_path=Path("."), path=Path(".")
+    )
+
+    for python_model in (model3, model4):
+        with pytest.raises(
+            ConfigError,
+            match=r".*All models should have an owner.*",
+        ):
+            sushi_context.upsert_model(python_model)
+
+    @model(name="memory.sushi.model5", columns={"col": "int"}, owner="test")
+    def model5_entrypoint(context, **kwargs):
+        yield pd.DataFrame({"col": []})
+
+    model5 = model.get_registry()["memory.sushi.model5"].model(
+        module_path=Path("."), path=Path(".")
+    )
+
+    sushi_context.upsert_model(model5)

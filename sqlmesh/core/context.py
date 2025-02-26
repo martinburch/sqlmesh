@@ -484,7 +484,10 @@ class GenericContext(BaseContext, t.Generic[C]):
         )
 
         update_model_schemas(
-            self.dag, models=self._models, context_path=self.path, lint_config=self.config.linter
+            self.dag,
+            models=self._models,
+            context_path=self.path,
+            linter=self._linter,
         )
 
         if model.dialect:
@@ -621,7 +624,7 @@ class GenericContext(BaseContext, t.Generic[C]):
                 self.dag,
                 models=self._models,
                 context_path=self.path,
-                lint_config=self.config.linter,
+                linter=self._linter,
             )
 
             if self.config.linter.enabled:

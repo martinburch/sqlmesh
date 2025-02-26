@@ -294,7 +294,9 @@ def test_model_qualification(tmp_path: Path):
             """
         )
 
-        ctx = Context(config=Config(), paths=tmp_path)
+        ctx = Context(
+            config=Config(linter=LinterConfig(enabled=True, warn_rules="ALL")), paths=tmp_path
+        )
         ctx.upsert_model(load_sql_based_model(expressions))
 
         assert (
@@ -2717,7 +2719,9 @@ def test_update_schema(tmp_path: Path):
     model.update_schema(schema)
     assert model.mapping_schema == {'"table_a"': {"a": "INT"}}
 
-    ctx = Context(config=Config(), paths=tmp_path)
+    ctx = Context(
+        config=Config(linter=LinterConfig(enabled=True, warn_rules="ALL")), paths=tmp_path
+    )
     with patch.object(get_console(), "log_warning") as mock_logger:
         ctx.upsert_model(model)
         assert (
@@ -2751,7 +2755,9 @@ def test_missing_schema_warnings(tmp_path: Path):
 
     console = get_console()
 
-    ctx = Context(config=Config(), paths=tmp_path)
+    ctx = Context(
+        config=Config(linter=LinterConfig(enabled=True, warn_rules="ALL")), paths=tmp_path
+    )
 
     # star, no schema, no deps
     with patch.object(console, "log_warning") as mock_logger:
@@ -7535,7 +7541,9 @@ def test_compile_time_checks(tmp_path: Path, assert_exp_eq):
     )
 
     # Strict SELECT * expansion
-    linter_cfg = LinterConfig(rules=["ambiguousorinvalidcolumn", "invalidselectstarexpansion"])
+    linter_cfg = LinterConfig(
+        enabled=True, rules=["ambiguousorinvalidcolumn", "invalidselectstarexpansion"]
+    )
     ctx.config.linter = linter_cfg
     strict_query = d.parse(
         """
