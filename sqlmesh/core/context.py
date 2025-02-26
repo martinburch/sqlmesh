@@ -496,7 +496,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         model.validate_definition()
 
         if self._linter:
-            self._linter.lint(model)
+            self._linter.lint_model(model)
 
         return model
 
@@ -628,15 +628,14 @@ class GenericContext(BaseContext, t.Generic[C]):
             )
 
             if self.config.linter.enabled:
-                rules, warn_rules = self.config.linter.fill_rules(self._linter_rules)
-                self._linter = Linter(self._linter_rules, rules, warn_rules)
+                self._linter = Linter().fill_from_config(self._linter_rules, self.config.linter)
 
             for model in self.models.values():
                 # The model definition can be validated correctly only after the schema is set.
                 model.validate_definition()
 
                 if self._linter:
-                    self._linter.lint(model)
+                    self._linter.lint_model(model)
 
         duplicates = set(self._models) & set(self._standalone_audits)
         if duplicates:

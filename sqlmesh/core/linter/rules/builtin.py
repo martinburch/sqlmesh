@@ -10,19 +10,17 @@ from sqlmesh.core.model import Model, SqlModel
 
 
 class NoSelectStar(Rule):
-    def check(self, model: Model) -> t.Optional[RuleViolation]:
+    """Query should not contain SELECT * on its outer most projections, even if it can be expanded."""
+
+    def check_model(self, model: Model) -> t.Optional[RuleViolation]:
         if not isinstance(model, SqlModel):
             return None
 
-        return RuleViolation(rule=self, model=model) if model.query.is_star else None
-
-    @property
-    def summary(self) -> str:
-        return "Query should not contain SELECT * on its outer most projections, even if it can be expanded."
+        return self.violation() if model.query.is_star else None
 
 
 class InvalidSelectStarExpansion(Rule):
-    def check(self, model: Model) -> t.Optional[RuleViolation]:
+    def check_model(self, model: Model) -> t.Optional[RuleViolation]:
         if not model._render_violations:
             return None
 
@@ -30,21 +28,17 @@ class InvalidSelectStarExpansion(Rule):
         if not deps:
             return None
 
-        self._deps = deps
-        self._model_fqn = model.fqn
-        return RuleViolation(rule=self, model=model)
-
-    @property
-    def summary(self) -> str:
-        return (
-            f"SELECT * cannot be expanded due to missing schema(s) for model(s): {self._deps}. "
+        violation_msg = (
+            f"SELECT * cannot be expanded due to missing schema(s) for model(s): {deps}. "
             "Run `sqlmesh create_external_models` and / or make sure that the model "
-            f"'{self._model_fqn}' can be rendered at parse time."
+            f"'{model.fqn}' can be rendered at parse time."
         )
+
+        return self.violation(violation_msg)
 
 
 class AmbiguousOrInvalidColumn(Rule):
-    def check(self, model: Model) -> t.Optional[RuleViolation]:
+    def check_model(self, model: Model) -> t.Optional[RuleViolation]:
         if not model._render_violations:
             return None
 
@@ -52,10 +46,8 @@ class AmbiguousOrInvalidColumn(Rule):
         if not sqlglot_err:
             return None
 
-        self._error = sqlglot_err
-        self._model_fqn = model.fqn
-        return RuleViolation(rule=self, model=model)
+        violation_msg = (
+            f"{sqlglot_err} for model '{model.fqn}', the column may not exist or is ambiguous."
+        )
 
-    @property
-    def summary(self) -> str:
-        return f"{self._error} for model '{self._model_fqn}', the column may not exist or is ambiguous."
+        return self.violation(violation_msg)
