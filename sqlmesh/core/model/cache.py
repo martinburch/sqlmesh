@@ -134,10 +134,9 @@ class OptimizedQueryCache:
         optimized_query = model.render_query()
 
         if self.linter:
-            for violated_rule in model._render_violations:
+            if any(rule in self.linter.rules for rule in model._render_violations):
                 # Do not cache the optimized query if the renderer came across lint errors
-                if violated_rule.__name__.lower() in self.linter.rules:
-                    return None
+                return None
 
         new_entry = OptimizedQueryCacheEntry(optimized_rendered_query=optimized_query)
         self._file_cache.put(name, value=new_entry)

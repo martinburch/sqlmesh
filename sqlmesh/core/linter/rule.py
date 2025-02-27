@@ -35,17 +35,6 @@ class Rule(abc.ABC):
         """The name of this rule."""
         return self._name
 
-    def __hash__(self) -> int:
-        return hash(self.name)
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, str):
-            return self.name == other.lower()
-        elif isinstance(other, Rule):
-            return self.name == other.name
-
-        return NotImplemented
-
     def __repr__(self) -> str:
         return self.name
 
@@ -80,8 +69,9 @@ class RuleSet(Mapping[str, type[Rule]]):
     def __len__(self) -> int:
         return len(self._underlying)
 
-    def __getitem__(self, rule: str) -> type[Rule]:
-        return self._underlying[rule]
+    def __getitem__(self, rule: str | type[Rule]) -> type[Rule]:
+        key = rule if isinstance(rule, str) else rule.__name__.lower()
+        return self._underlying[key]
 
     def __op(
         self,
@@ -91,8 +81,7 @@ class RuleSet(Mapping[str, type[Rule]]):
     ) -> RuleSet:
         rules = set()
         for rule in op(set(self.values()), set(other.values())):
-            rule_name = rule.__name__.lower()
-            rules.add(other[rule_name] if rule_name in other else self[rule_name])
+            rules.add(other[rule] if rule in other else self[rule])
 
         return RuleSet(rules)
 
