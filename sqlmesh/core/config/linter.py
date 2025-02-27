@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import typing as t
 
 from sqlmesh.core.config.base import BaseConfig
-from sqlmesh.core.model.meta import RuleListType
 
 
 class LinterConfig(BaseConfig):
@@ -19,6 +19,6 @@ class LinterConfig(BaseConfig):
 
     enabled: bool = False
 
-    rules: RuleListType = []
-    warn_rules: RuleListType = []
-    exclude_rules: RuleListType = []
+    rules: t.Union[t.List[str], str] = []
+    warn_rules: t.Union[t.List[str], str] = []
+    exclude_rules: t.Union[t.List[str], str] = []

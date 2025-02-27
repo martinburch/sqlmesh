@@ -261,7 +261,7 @@ class Loader(abc.ABC):
         return requirements, excluded_requirements
 
     def _load_linting_rules(self) -> RuleSet:
-        """Loads custom linting rules"""
+        """Loads user linting rules"""
         return RuleSet()
 
     def _glob_paths(
@@ -605,7 +605,9 @@ class SqlMeshLoader(Loader):
         return metrics
 
     def _load_linting_rules(self) -> RuleSet:
-        user_rules = []
+        user_rules: t.List[type[Rule]] = []
+        rule_names: t.Dict[str, Path] = {}
+
         for path in self._glob_paths(
             self.config_path / c.LINTER,
             ignore_patterns=self.config.ignore_patterns,
@@ -614,7 +616,16 @@ class SqlMeshLoader(Loader):
             if os.path.getsize(path):
                 self._track_file(path)
                 module = import_python_file(path, self.config_path)
-                user_rules.extend(subclasses(module.__name__, Rule, (Rule,)))
+                module_rules = subclasses(module.__name__, Rule, (Rule,))
+                for user_rule in module_rules:
+                    rule_name = user_rule.__name__.lower()
+                    if rule_name in rule_names:
+                        raise ConfigError(
+                            f"Rule {rule_name} is redefined in '{path}', previous definition is in {rule_names[rule_name]}."
+                        )
+                    rule_names[rule_name] = path
+
+                user_rules.extend(module_rules)
 
         return RuleSet(user_rules)
 

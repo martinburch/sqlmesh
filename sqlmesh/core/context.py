@@ -350,8 +350,7 @@ class GenericContext(BaseContext, t.Generic[C]):
         self._requirements: t.Dict[str, str] = {}
         self._excluded_requirements: t.Set[str] = set()
         self._default_catalog: t.Optional[str] = None
-        self._linter_rules: RuleSet = BUILTIN_RULES
-        self._linter: t.Optional[Linter] = None
+        self._all_rules: RuleSet = BUILTIN_RULES
         self._loaded: bool = False
 
         self.path, self.config = t.cast(t.Tuple[Path, C], next(iter(self.configs.items())))
@@ -495,7 +494,7 @@ class GenericContext(BaseContext, t.Generic[C]):
 
         model.validate_definition()
 
-        if self._linter:
+        if self.config.linter.enabled:
             self._linter.lint_model(model)
 
         return model
@@ -587,9 +586,11 @@ class GenericContext(BaseContext, t.Generic[C]):
             self._standalone_audits.update(project.standalone_audits)
             self._requirements.update(project.requirements)
             self._excluded_requirements.update(project.excluded_requirements)
-            self._linter_rules = self._linter_rules.union(project.user_rules)
+            self._all_rules = self._all_rules.union(project.user_rules)
 
         uncached = set()
+
+        self._linter = Linter.from_rules(self._all_rules, self.config.linter)
 
         if any(self._projects):
             prod = self.state_reader.get_environment(c.PROD)
@@ -627,14 +628,11 @@ class GenericContext(BaseContext, t.Generic[C]):
                 linter=self._linter,
             )
 
-            if self.config.linter.enabled:
-                self._linter = Linter().fill_from_config(self._linter_rules, self.config.linter)
-
             for model in self.models.values():
                 # The model definition can be validated correctly only after the schema is set.
                 model.validate_definition()
 
-                if self._linter:
+                if self.config.linter.enabled:
                     self._linter.lint_model(model)
 
         duplicates = set(self._models) & set(self._standalone_audits)

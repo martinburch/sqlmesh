@@ -1425,7 +1425,7 @@ def test_model_linting(tmp_path: pathlib.Path, sushi_context) -> None:
     # Case: Ensure load DOES NOT work if LinterConfig has overlapping rules
     with pytest.raises(
         ConfigError,
-        match=r"Found overlapping rules \[noselectstar\] in lint config.",
+        match=r"Rules cannot simultaneously warn and raise an error: \[noselectstar\]",
     ):
         ctx.config.linter = LinterConfig(
             enabled=True, rules=["noselectstar"], warn_rules=["noselectstar"]

@@ -44,7 +44,6 @@ if t.TYPE_CHECKING:
     from sqlmesh.core._typing import CustomMaterializationProperties, SessionProperties
 
 FunctionCall = t.Tuple[str, t.Dict[str, exp.Expression]]
-RuleListType = t.Union[t.List[str], t.Literal["ALL"]]
 
 
 class ModelMeta(_Node):
@@ -77,7 +76,7 @@ class ModelMeta(_Node):
     physical_version: t.Optional[str] = None
     gateway: t.Optional[str] = None
     optimize_query: t.Optional[bool] = None
-    ignore_lints_: t.Optional[RuleListType] = Field(
+    ignore_lints_: t.Optional[t.Union[t.List[str], str]] = Field(
         default=None, exclude=True, alias="ignore_lints"
     )
 
@@ -463,8 +462,5 @@ class ModelMeta(_Node):
         return getattr(self.kind, "on_destructive_change", OnDestructiveChange.ALLOW)
 
     @property
-    def ignore_lints(self) -> RuleListType:
-        if not self.ignore_lints_:
-            return []
-
-        return self.ignore_lints_
+    def ignore_lints(self) -> t.Union[t.List[str], str]:
+        return self.ignore_lints_ or []

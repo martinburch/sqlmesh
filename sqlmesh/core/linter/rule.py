@@ -14,8 +14,8 @@ import typing as t
 class Rule(abc.ABC):
     """The base class for a rule."""
 
-    def __init__(self, name: t.Optional[str] = None) -> None:
-        self._name = name or self.__class__.__name__.lower()
+    def __init__(self) -> None:
+        self._name = self.__class__.__name__.lower()
 
     @abc.abstractmethod
     def check_model(self, model: Model) -> t.Optional[RuleViolation]:
@@ -45,7 +45,7 @@ class RuleViolation:
         self.violation_msg = violation_msg
 
     def __repr__(self) -> str:
-        return f" - {self.rule.name}: {self.violation_msg}"
+        return f"{self.rule.name}: {self.violation_msg}"
 
 
 class RuleSet(Mapping[str, type[Rule]]):

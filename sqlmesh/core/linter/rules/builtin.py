@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import typing as t
 
+from sqlglot.helper import subclasses
 
-from sqlmesh.core.linter.rule import Rule, RuleViolation
+from sqlmesh.core.linter.rule import Rule, RuleViolation, RuleSet
 from sqlmesh.core.model import Model, SqlModel
 
 
@@ -51,3 +52,6 @@ class AmbiguousOrInvalidColumn(Rule):
         )
 
         return self.violation(violation_msg)
+
+
+BUILTIN_RULES = RuleSet(subclasses(__name__, Rule, (Rule,)))
